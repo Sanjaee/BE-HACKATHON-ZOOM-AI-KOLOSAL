@@ -142,10 +142,10 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 
 			// Chat routes - specific routes before general :id routes
 			// IMPORTANT: More specific routes must be defined before less specific ones
-			// Register test-kolosal FIRST before all other :id routes to ensure it's matched
-			log.Println("[ROUTER] Registering test-kolosal route in rooms group (FIRST)...")
-			rooms.POST("/:id/test-kolosal", authHandler.AuthMiddleware(), chatHandler.TestKolosalAPI)
-			log.Println("[ROUTER] ✓ test-kolosal route registered successfully in rooms group")
+			// Register kolosal FIRST before all other :id routes to ensure it's matched
+			log.Println("[ROUTER] Registering kolosal route in rooms group (FIRST)...")
+			rooms.POST("/:id/kolosal", authHandler.AuthMiddleware(), chatHandler.KolosalAPI)
+			log.Println("[ROUTER] ✓ kolosal route registered successfully in rooms group")
 
 			// Other chat routes
 			rooms.GET("/:id/messages", chatHandler.GetMessages)
@@ -181,15 +181,15 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 		log.Printf("[NoRoute] FullPath: %s", fullPath)
 		log.Printf("[NoRoute] RequestURI: %s", c.Request.RequestURI)
 
-		// Check if it's a test-kolosal request
-		if method == "POST" && strings.Contains(path, "/test-kolosal") {
-			log.Printf("[NoRoute] ✓ Detected test-kolosal request!")
-			// Extract room ID from path: /api/v1/rooms/:id/test-kolosal
+		// Check if it's a kolosal request
+		if method == "POST" && strings.Contains(path, "/kolosal") {
+			log.Printf("[NoRoute] ✓ Detected kolosal request!")
+			// Extract room ID from path: /api/v1/rooms/:id/kolosal
 			parts := strings.Split(strings.Trim(path, "/"), "/")
 			log.Printf("[NoRoute] Path parts: %v (length: %d)", parts, len(parts))
 
-			// Path format: /api/v1/rooms/:id/test-kolosal
-			// After split and trim: ["api", "v1", "rooms", ":id", "test-kolosal"]
+			// Path format: /api/v1/rooms/:id/kolosal
+			// After split and trim: ["api", "v1", "rooms", ":id", "kolosal"]
 			// We need to find "rooms" and get the next element as room ID
 			roomID := ""
 			for i, part := range parts {
@@ -215,8 +215,8 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 				}
 
 				// Call the handler directly
-				log.Printf("[NoRoute] Calling TestKolosalAPI handler...")
-				chatHandler.TestKolosalAPI(c)
+				log.Printf("[NoRoute] Calling KolosalAPI handler...")
+				chatHandler.KolosalAPI(c)
 				return
 			} else {
 				log.Printf("[NoRoute] ✗ Could not extract room ID from path")
@@ -229,20 +229,20 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 
 	// Debug: Print all routes - ALWAYS ACTIVE for debugging
 	log.Println("=== Registered Routes ===")
-	testKolosalFound := false
+	kolosalFound := false
 	for _, route := range r.Routes() {
 		if route.Path != "" {
 			log.Printf("Route: %s %s", route.Method, route.Path)
-			if strings.Contains(route.Path, "test-kolosal") {
-				testKolosalFound = true
-				log.Printf("  -> TEST-KOLOSAL ROUTE FOUND: %s %s", route.Method, route.Path)
+			if strings.Contains(route.Path, "kolosal") {
+				kolosalFound = true
+				log.Printf("  -> KOLOSAL ROUTE FOUND: %s %s", route.Method, route.Path)
 			}
 		}
 	}
-	if !testKolosalFound {
-		log.Println("WARNING: test-kolosal route NOT found in registered routes!")
+	if !kolosalFound {
+		log.Println("WARNING: kolosal route NOT found in registered routes!")
 	} else {
-		log.Println("SUCCESS: test-kolosal route is registered")
+		log.Println("SUCCESS: kolosal route is registered")
 	}
 	log.Println("========================")
 

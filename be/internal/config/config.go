@@ -108,8 +108,8 @@ func Load() (*Config, error) {
 		LiveKitAPIKey:    getEnv("LIVEKIT_API_KEY", "devkey"),
 		LiveKitAPISecret: getEnv("LIVEKIT_API_SECRET", ""),
 
-		// Kolosal AI
-		KolosalAPIURL: getEnv("KOLOSAL_API_URL", "https://api.kolosal.ai/v1/chat/completions"),
+		// Kolosal AI - base URL (endpoint will be appended in service)
+		KolosalAPIURL: getEnv("KOLOSAL_API_URL", "https://api.kolosal.ai"),
 		KolosalAPIKey: getEnv("KOLOSAL_API_KEY", ""),
 	}
 

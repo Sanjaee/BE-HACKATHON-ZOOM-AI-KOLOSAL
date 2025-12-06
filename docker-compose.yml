@@ -49,7 +49,7 @@ services:
       - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-devkey}
       - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-6RfzN3B2Lqj8vzdP9XC4tFkp57YhUBsM}
       # Kolosal AI
-      - KOLOSAL_API_URL=${KOLOSAL_API_URL:-https://api.kolosal.ai/v1/chat/completions}
+      - KOLOSAL_API_URL=${KOLOSAL_API_URL:-https://api.kolosal.ai}
       - KOLOSAL_API_KEY=${KOLOSAL_API_KEY}
     depends_on:
       db:

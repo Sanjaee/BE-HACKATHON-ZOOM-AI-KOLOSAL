@@ -145,26 +145,26 @@ func (h *ChatHandler) ServeWebSocket(c *gin.Context) {
 	h.hub.ServeWS(c.Writer, c.Request, roomID, claims.UserID)
 }
 
-// TestKolosalAPI handles testing Kolosal API
-// POST /api/v1/rooms/:id/test-kolosal
+// KolosalAPI handles Kolosal AI API requests
+// POST /api/v1/rooms/:id/kolosal
 // This handler follows the EXACT same pattern as CreateMessage
-func (h *ChatHandler) TestKolosalAPI(c *gin.Context) {
-	log.Printf("[TestKolosalAPI] ===== HANDLER CALLED =====")
-	log.Printf("[TestKolosalAPI] Method: %s, Path: %s", c.Request.Method, c.Request.URL.Path)
-	log.Printf("[TestKolosalAPI] FullPath: %s", c.FullPath())
+func (h *ChatHandler) KolosalAPI(c *gin.Context) {
+	log.Printf("[KolosalAPI] ===== HANDLER CALLED =====")
+	log.Printf("[KolosalAPI] Method: %s, Path: %s", c.Request.Method, c.Request.URL.Path)
+	log.Printf("[KolosalAPI] FullPath: %s", c.FullPath())
 
 	// Get user ID from context first (same order as CreateMessage)
 	userID, exists := c.Get("userID")
 	if !exists {
-		log.Printf("[TestKolosalAPI] User not authenticated")
+		log.Printf("[KolosalAPI] User not authenticated")
 		util.Unauthorized(c, "User not authenticated")
 		return
 	}
-	log.Printf("[TestKolosalAPI] User ID: %s", userID)
+	log.Printf("[KolosalAPI] User ID: %s", userID)
 
 	// Get room ID from param (same as CreateMessage)
 	roomID := c.Param("id")
-	log.Printf("[TestKolosalAPI] Room ID from param: %s", roomID)
+	log.Printf("[KolosalAPI] Room ID from param: %s", roomID)
 	if roomID == "" {
 		util.BadRequest(c, "Room ID is required")
 		return
@@ -226,7 +226,7 @@ func (h *ChatHandler) TestKolosalAPI(c *gin.Context) {
 	// Call Kolosal API
 	response, err := h.kolosalService.ChatCompletions(kolosalRequest)
 	if err != nil {
-		log.Printf("[TestKolosalAPI] Error calling Kolosal API: %v", err)
+		log.Printf("[KolosalAPI] Error calling Kolosal API: %v", err)
 
 		// Broadcast error to all users
 		h.hub.BroadcastMessage(roomID, &websocket.Message{
@@ -288,23 +288,27 @@ func (h *ChatHandler) TestKolosalAPI(c *gin.Context) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	// Save AI message to database
-	// Try to create message, but if user doesn't exist, create a mock response
+	// Save AI message to database (persistent storage)
+	// Note: AI messages are saved with userID "ai-agent" - this user should exist in DB
+	// If user doesn't exist, CreateMessage will fail but we'll still broadcast via WebSocket
 	var aiMessage *service.ChatMessageResponse
-	aiMessage, err = h.chatService.CreateMessage(roomID, "ai-agent", aiResponse)
+	aiUserID := "ai-agent" // Fixed user ID for AI agent
+	aiMessage, err = h.chatService.CreateMessage(roomID, aiUserID, aiResponse)
 	if err != nil {
-		log.Printf("[TestKolosalAPI] Error saving AI message (user may not exist): %v", err)
-		// Create a mock message structure for WebSocket
-		// In production, you should create an "ai-agent" user in database
+		log.Printf("[KolosalAPI] Error saving AI message (user 'ai-agent' may not exist): %v", err)
+		log.Printf("[KolosalAPI] Message will still be broadcast via WebSocket but not persisted")
+		// Create a temporary message structure for WebSocket if DB save fails
 		aiMessage = &service.ChatMessageResponse{
 			ID:        fmt.Sprintf("ai-%d", time.Now().UnixNano()),
 			RoomID:    roomID,
-			UserID:    "ai-agent",
+			UserID:    aiUserID,
 			UserName:  "AI Agent",
 			UserEmail: "ai@agent.com",
 			Message:   aiResponse,
 			CreatedAt: time.Now(),
 		}
+	} else {
+		log.Printf("[KolosalAPI] AI message saved to database: %s", aiMessage.ID)
 	}
 
 	// Broadcast AI complete with final message
@@ -319,13 +323,14 @@ func (h *ChatHandler) TestKolosalAPI(c *gin.Context) {
 		},
 	})
 
-	log.Printf("[TestKolosalAPI] Success: user=%s, room=%s, prompt=%s, response_length=%d",
+	log.Printf("[KolosalAPI] Success: user=%s, room=%s, prompt=%s, response_length=%d",
 		userID, roomID, req.Prompt, len(aiResponse))
 
-	util.SuccessResponse(c, http.StatusOK, "Kolosal API test successful", gin.H{
+	util.SuccessResponse(c, http.StatusOK, "Kolosal API request successful", gin.H{
 		"prompt":   req.Prompt,
 		"response": aiResponse,
 		"model":    response.Model,
 		"usage":    response.Usage,
+		"message":  aiMessage, // Include saved message in response
 	})
 }

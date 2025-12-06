@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -75,8 +76,15 @@ func (s *kolosalService) ChatCompletions(request *KolosalChatRequest) (*KolosalC
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
+	// Build full URL with endpoint
+	apiURL := s.apiURL
+	if !strings.HasSuffix(apiURL, "/") {
+		apiURL += "/"
+	}
+	apiURL += "v1/chat/completions"
+
 	// Create HTTP request
-	req, err := http.NewRequest("POST", s.apiURL, bytes.NewBuffer(requestBody))
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(requestBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
