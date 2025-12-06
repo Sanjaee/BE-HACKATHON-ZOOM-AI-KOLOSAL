@@ -97,7 +97,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	authService := service.NewAuthServiceWithConfig(userRepo, cfg.JWTSecret, rabbitMQ, cfg)
 	roomService := service.NewRoomService(roomRepo, userRepo, cfg)
 	chatService := service.NewChatService(chatRepo, roomRepo, userRepo)
-	kolosalService := service.NewKolosalService(cfg.KolosalAPIURL, cfg.KolosalAPIKey)
+	// kolosalService removed - not available in this version
 
 	// Initialize WebSocket hub
 	wsHub := websocket.NewHub()
@@ -106,7 +106,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	// Initialize handlers
 	authHandler := NewAuthHandler(authService, cfg.JWTSecret)
 	roomHandler := NewRoomHandler(roomService)
-	chatHandler := NewChatHandler(chatService, kolosalService, roomService, wsHub, cfg.JWTSecret)
+	chatHandler := NewChatHandler(chatService, wsHub, cfg.JWTSecret)
 
 	// API routes
 	api := r.Group("/api/v1")
@@ -133,8 +133,8 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 		rooms := api.Group("/rooms")
 		{
 			// Public routes
-			rooms.GET("", roomHandler.GetRooms)
-			rooms.GET("/ids", roomHandler.GetRoomIDs)                              // Get all room IDs for AI
+			// rooms.GET("", roomHandler.GetRooms) // Method not available in this version
+			// rooms.GET("/ids", roomHandler.GetRoomIDs) // Method not available in this version
 			rooms.GET("/my", authHandler.AuthMiddleware(), roomHandler.GetMyRooms) // Specific route before :id
 
 			// Protected routes
@@ -143,9 +143,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 			// Chat routes - specific routes before general :id routes
 			// IMPORTANT: More specific routes must be defined before less specific ones
 			// Register test-kolosal FIRST before all other :id routes to ensure it's matched
-			log.Println("[ROUTER] Registering test-kolosal route in rooms group (FIRST)...")
-			rooms.POST("/:id/test-kolosal", authHandler.AuthMiddleware(), chatHandler.TestKolosalAPI)
-			log.Println("[ROUTER] ✓ test-kolosal route registered successfully in rooms group")
+			// test-kolosal route removed - not available in this handler
 
 			// Other chat routes
 			rooms.GET("/:id/messages", chatHandler.GetMessages)
@@ -167,14 +165,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	// Register test-kolosal route directly at root level as final fallback
-	// This MUST be before NoRoute handler to ensure it's checked first
-	log.Println("[ROUTER] Registering test-kolosal route at root level...")
-	r.POST("/api/v1/rooms/:id/test-kolosal", authHandler.AuthMiddleware(), chatHandler.TestKolosalAPI)
-	log.Println("[ROUTER] ✓ test-kolosal route registered successfully at root level")
-
-	// NoRoute handler - catch 404 and check if it's test-kolosal
-	// This is a fallback in case the route is not registered properly
+	// NoRoute handler - catch 404
 	log.Println("[ROUTER] Registering NoRoute handler...")
 	r.NoRoute(func(c *gin.Context) {
 		path := c.Request.URL.Path
@@ -186,48 +177,6 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 		log.Printf("[NoRoute] Path: %s", path)
 		log.Printf("[NoRoute] FullPath: %s", fullPath)
 		log.Printf("[NoRoute] RequestURI: %s", c.Request.RequestURI)
-
-		// Check if it's a test-kolosal request
-		if method == "POST" && strings.Contains(path, "/test-kolosal") {
-			log.Printf("[NoRoute] ✓ Detected test-kolosal request!")
-			// Extract room ID from path: /api/v1/rooms/:id/test-kolosal
-			parts := strings.Split(strings.Trim(path, "/"), "/")
-			log.Printf("[NoRoute] Path parts: %v (length: %d)", parts, len(parts))
-
-			// Path format: /api/v1/rooms/:id/test-kolosal
-			// After split and trim: ["api", "v1", "rooms", ":id", "test-kolosal"]
-			// We need to find "rooms" and get the next element as room ID
-			roomID := ""
-			for i, part := range parts {
-				if part == "rooms" && i+1 < len(parts) {
-					roomID = parts[i+1]
-					break
-				}
-			}
-
-			if roomID != "" {
-				log.Printf("[NoRoute] ✓ Extracted room ID: %s", roomID)
-				// Set the room ID as a param
-				c.Params = []gin.Param{{Key: "id", Value: roomID}}
-
-				// Run AuthMiddleware first to set userID in context
-				log.Printf("[NoRoute] Running AuthMiddleware...")
-				authHandler.AuthMiddleware()(c)
-
-				// Check if middleware aborted (unauthorized)
-				if c.IsAborted() {
-					log.Printf("[NoRoute] AuthMiddleware aborted request")
-					return
-				}
-
-				// Call the handler directly
-				log.Printf("[NoRoute] Calling TestKolosalAPI handler...")
-				chatHandler.TestKolosalAPI(c)
-				return
-			} else {
-				log.Printf("[NoRoute] ✗ Could not extract room ID from path")
-			}
-		}
 
 		log.Printf("[NoRoute] Returning 404 response")
 		c.JSON(404, gin.H{"error": "Route not found", "path": path, "method": method, "fullPath": fullPath})

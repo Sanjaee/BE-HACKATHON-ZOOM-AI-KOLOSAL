@@ -8,6 +8,7 @@ echo "🧹 [3/5] Removing backend container..."
 docker compose down
 
 echo "⚙️ [4/5] Rebuilding and starting backend container..."
-docker compose up --build -d
+docker-compose build --no-cache backend
+docker-compose up -d backend
 
 echo "✅ Deploy finished successfully!"
