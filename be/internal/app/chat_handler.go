@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 	"yourapp/internal/service"
 	"yourapp/internal/util"
 	"yourapp/internal/websocket"
@@ -197,6 +198,17 @@ func (h *ChatHandler) TestKolosalAPI(c *gin.Context) {
 		maxTokens = 1000
 	}
 
+	// Broadcast AI typing status to all users in room (disable input for all)
+	h.hub.BroadcastMessage(roomID, &websocket.Message{
+		RoomID: roomID,
+		UserID: userID.(string),
+		Type:   "ai_typing",
+		Payload: map[string]interface{}{
+			"user_id": userID.(string),
+			"status":  "processing",
+		},
+	})
+
 	// Prepare Kolosal request
 	kolosalRequest := &service.KolosalChatRequest{
 		Model: model,
@@ -215,6 +227,18 @@ func (h *ChatHandler) TestKolosalAPI(c *gin.Context) {
 	response, err := h.kolosalService.ChatCompletions(kolosalRequest)
 	if err != nil {
 		log.Printf("[TestKolosalAPI] Error calling Kolosal API: %v", err)
+
+		// Broadcast error to all users
+		h.hub.BroadcastMessage(roomID, &websocket.Message{
+			RoomID: roomID,
+			UserID: userID.(string),
+			Type:   "ai_error",
+			Payload: map[string]interface{}{
+				"user_id": userID.(string),
+				"error":   fmt.Sprintf("Failed to call Kolosal API: %v", err),
+			},
+		})
+
 		util.ErrorResponse(c, http.StatusInternalServerError, fmt.Sprintf("Failed to call Kolosal API: %v", err), nil)
 		return
 	}
@@ -226,6 +250,74 @@ func (h *ChatHandler) TestKolosalAPI(c *gin.Context) {
 	} else {
 		aiResponse = "No response from AI"
 	}
+
+	// Generate temporary ID for streaming message
+	tempID := fmt.Sprintf("ai-temp-%d", time.Now().UnixNano())
+
+	// Simulate streaming by sending chunks (for realtime effect)
+	chunkSize := 20 // characters per chunk
+	aiResponseRunes := []rune(aiResponse)
+	totalChunks := (len(aiResponseRunes) + chunkSize - 1) / chunkSize
+
+	for i := 0; i < totalChunks; i++ {
+		start := i * chunkSize
+		end := start + chunkSize
+		if end > len(aiResponseRunes) {
+			end = len(aiResponseRunes)
+		}
+
+		chunk := string(aiResponseRunes[start:end])
+		accumulatedContent := string(aiResponseRunes[0:end])
+
+		// Broadcast streaming chunk to all users
+		h.hub.BroadcastMessage(roomID, &websocket.Message{
+			RoomID: roomID,
+			UserID: userID.(string),
+			Type:   "ai_stream",
+			Payload: map[string]interface{}{
+				"id":         tempID,
+				"content":    accumulatedContent,
+				"chunk":      chunk,
+				"user_id":    userID.(string),
+				"user_name":  "AI Agent",
+				"user_email": "ai@agent.com",
+			},
+		})
+
+		// Small delay to simulate streaming
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// Save AI message to database
+	// Try to create message, but if user doesn't exist, create a mock response
+	var aiMessage *service.ChatMessageResponse
+	aiMessage, err = h.chatService.CreateMessage(roomID, "ai-agent", aiResponse)
+	if err != nil {
+		log.Printf("[TestKolosalAPI] Error saving AI message (user may not exist): %v", err)
+		// Create a mock message structure for WebSocket
+		// In production, you should create an "ai-agent" user in database
+		aiMessage = &service.ChatMessageResponse{
+			ID:        fmt.Sprintf("ai-%d", time.Now().UnixNano()),
+			RoomID:    roomID,
+			UserID:    "ai-agent",
+			UserName:  "AI Agent",
+			UserEmail: "ai@agent.com",
+			Message:   aiResponse,
+			CreatedAt: time.Now(),
+		}
+	}
+
+	// Broadcast AI complete with final message
+	h.hub.BroadcastMessage(roomID, &websocket.Message{
+		RoomID: roomID,
+		UserID: userID.(string),
+		Type:   "ai_complete",
+		Payload: map[string]interface{}{
+			"temp_id": tempID,
+			"user_id": userID.(string),
+			"message": aiMessage,
+		},
+	})
 
 	log.Printf("[TestKolosalAPI] Success: user=%s, room=%s, prompt=%s, response_length=%d",
 		userID, roomID, req.Prompt, len(aiResponse))
