@@ -63,15 +63,16 @@ func (h *RoomHandler) GetRoom(c *gin.Context) {
 
 // GetRooms handles getting all rooms
 // GET /api/v1/rooms
-func (h *RoomHandler) GetRooms(c *gin.Context) {
-	rooms, err := h.roomService.GetAllRooms()
-	if err != nil {
-		util.ErrorResponse(c, http.StatusInternalServerError, err.Error(), nil)
-		return
-	}
-
-	util.SuccessResponse(c, http.StatusOK, "Rooms retrieved successfully", rooms)
-}
+// DISABLED: No longer showing all rooms, users create room and get ID or join by ID
+// func (h *RoomHandler) GetRooms(c *gin.Context) {
+// 	rooms, err := h.roomService.GetAllRooms()
+// 	if err != nil {
+// 		util.ErrorResponse(c, http.StatusInternalServerError, err.Error(), nil)
+// 		return
+// 	}
+//
+// 	util.SuccessResponse(c, http.StatusOK, "Rooms retrieved successfully", rooms)
+// }
 
 // GetMyRooms handles getting rooms created by current user
 // GET /api/v1/rooms/my

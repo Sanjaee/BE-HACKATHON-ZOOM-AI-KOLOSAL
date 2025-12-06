@@ -109,7 +109,8 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 		rooms := api.Group("/rooms")
 		{
 			// Public routes
-			rooms.GET("", roomHandler.GetRooms)
+			// DISABLED: No longer showing all rooms, users create room and get ID or join by ID
+			// rooms.GET("", roomHandler.GetRooms)
 			rooms.GET("/:id", roomHandler.GetRoom)
 
 			// Protected routes
