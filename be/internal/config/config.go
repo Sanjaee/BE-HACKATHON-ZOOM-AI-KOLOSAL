@@ -52,6 +52,10 @@ type Config struct {
 	LiveKitURL       string
 	LiveKitAPIKey    string
 	LiveKitAPISecret string
+
+	// Kolosal AI
+	KolosalAPIURL string
+	KolosalAPIKey string
 }
 
 func Load() (*Config, error) {
@@ -102,7 +106,11 @@ func Load() (*Config, error) {
 		// LiveKit - gunakan wss untuk production dengan nginx proxy
 		LiveKitURL:       getEnv("LIVEKIT_URL", "wss://zoom.zacloth.com/rtc"),
 		LiveKitAPIKey:    getEnv("LIVEKIT_API_KEY", "devkey"),
-		LiveKitAPISecret: getEnv("LIVEKIT_API_SECRET", "6RfzN3B2Lqj8vzdP9XC4tFkp57YhUBsM"),
+		LiveKitAPISecret: getEnv("LIVEKIT_API_SECRET", ""),
+
+		// Kolosal AI
+		KolosalAPIURL: getEnv("KOLOSAL_API_URL", "https://api.kolosal.ai/v1/chat/completions"),
+		KolosalAPIKey: getEnv("KOLOSAL_API_KEY", ""),
 	}
 
 	// Build database URL if not provided

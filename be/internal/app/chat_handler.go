@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -13,16 +14,20 @@ import (
 )
 
 type ChatHandler struct {
-	chatService service.ChatService
-	hub         *websocket.Hub
-	jwtSecret   string
+	chatService    service.ChatService
+	kolosalService service.KolosalService
+	roomService    service.RoomService
+	hub            *websocket.Hub
+	jwtSecret      string
 }
 
-func NewChatHandler(chatService service.ChatService, hub *websocket.Hub, jwtSecret string) *ChatHandler {
+func NewChatHandler(chatService service.ChatService, kolosalService service.KolosalService, roomService service.RoomService, hub *websocket.Hub, jwtSecret string) *ChatHandler {
 	return &ChatHandler{
-		chatService: chatService,
-		hub:         hub,
-		jwtSecret:   jwtSecret,
+		chatService:    chatService,
+		kolosalService: kolosalService,
+		roomService:    roomService,
+		hub:            hub,
+		jwtSecret:      jwtSecret,
 	}
 }
 
@@ -137,4 +142,98 @@ func (h *ChatHandler) ServeWebSocket(c *gin.Context) {
 
 	// Serve WebSocket connection
 	h.hub.ServeWS(c.Writer, c.Request, roomID, claims.UserID)
+}
+
+// TestKolosalAPI handles testing Kolosal API
+// POST /api/v1/rooms/:id/test-kolosal
+// This handler follows the EXACT same pattern as CreateMessage
+func (h *ChatHandler) TestKolosalAPI(c *gin.Context) {
+	log.Printf("[TestKolosalAPI] ===== HANDLER CALLED =====")
+	log.Printf("[TestKolosalAPI] Method: %s, Path: %s", c.Request.Method, c.Request.URL.Path)
+	log.Printf("[TestKolosalAPI] FullPath: %s", c.FullPath())
+
+	// Get user ID from context first (same order as CreateMessage)
+	userID, exists := c.Get("userID")
+	if !exists {
+		log.Printf("[TestKolosalAPI] User not authenticated")
+		util.Unauthorized(c, "User not authenticated")
+		return
+	}
+	log.Printf("[TestKolosalAPI] User ID: %s", userID)
+
+	// Get room ID from param (same as CreateMessage)
+	roomID := c.Param("id")
+	log.Printf("[TestKolosalAPI] Room ID from param: %s", roomID)
+	if roomID == "" {
+		util.BadRequest(c, "Room ID is required")
+		return
+	}
+
+	// Verify room exists (same pattern as CreateMessage - it verifies in service)
+	// But we verify here first to match the pattern
+	_, err := h.roomService.GetRoomByID(roomID)
+	if err != nil {
+		util.ErrorResponse(c, http.StatusNotFound, "Room not found", nil)
+		return
+	}
+
+	var req struct {
+		Prompt    string `json:"prompt" binding:"required"`
+		Model     string `json:"model,omitempty"`
+		MaxTokens int    `json:"max_tokens,omitempty"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		util.BadRequest(c, err.Error())
+		return
+	}
+
+	// Default values
+	model := req.Model
+	if model == "" {
+		model = "meta-llama/llama-4-maverick-17b-128e-instruct"
+	}
+	maxTokens := req.MaxTokens
+	if maxTokens == 0 {
+		maxTokens = 1000
+	}
+
+	// Prepare Kolosal request
+	kolosalRequest := &service.KolosalChatRequest{
+		Model: model,
+		Messages: []service.Message{
+			{
+				Role:    "user",
+				Content: req.Prompt,
+			},
+		},
+		MaxTokens:   maxTokens,
+		Temperature: 0.7,
+		Stream:      false,
+	}
+
+	// Call Kolosal API
+	response, err := h.kolosalService.ChatCompletions(kolosalRequest)
+	if err != nil {
+		log.Printf("[TestKolosalAPI] Error calling Kolosal API: %v", err)
+		util.ErrorResponse(c, http.StatusInternalServerError, fmt.Sprintf("Failed to call Kolosal API: %v", err), nil)
+		return
+	}
+
+	// Extract response message
+	var aiResponse string
+	if len(response.Choices) > 0 && len(response.Choices[0].Message.Content) > 0 {
+		aiResponse = response.Choices[0].Message.Content
+	} else {
+		aiResponse = "No response from AI"
+	}
+
+	log.Printf("[TestKolosalAPI] Success: user=%s, room=%s, prompt=%s, response_length=%d",
+		userID, roomID, req.Prompt, len(aiResponse))
+
+	util.SuccessResponse(c, http.StatusOK, "Kolosal API test successful", gin.H{
+		"prompt":   req.Prompt,
+		"response": aiResponse,
+		"model":    response.Model,
+		"usage":    response.Usage,
+	})
 }

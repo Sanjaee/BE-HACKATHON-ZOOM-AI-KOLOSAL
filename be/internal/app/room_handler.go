@@ -73,6 +73,31 @@ func (h *RoomHandler) GetRooms(c *gin.Context) {
 	util.SuccessResponse(c, http.StatusOK, "Rooms retrieved successfully", rooms)
 }
 
+// GetRoomIDs handles getting all room IDs (for AI/chatbot to know available rooms)
+// GET /api/v1/rooms/ids
+func (h *RoomHandler) GetRoomIDs(c *gin.Context) {
+	rooms, err := h.roomService.GetAllRooms()
+	if err != nil {
+		util.ErrorResponse(c, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+
+	// Extract only room IDs
+	roomIDs := make([]map[string]interface{}, 0, len(rooms))
+	for _, room := range rooms {
+		roomIDs = append(roomIDs, map[string]interface{}{
+			"id":          room.ID,
+			"name":        room.Name,
+			"description": room.Description,
+		})
+	}
+
+	util.SuccessResponse(c, http.StatusOK, "Room IDs retrieved successfully", gin.H{
+		"rooms": roomIDs,
+		"count": len(roomIDs),
+	})
+}
+
 // GetMyRooms handles getting rooms created by current user
 // GET /api/v1/rooms/my
 func (h *RoomHandler) GetMyRooms(c *gin.Context) {
