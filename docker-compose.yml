@@ -1,0 +1,168 @@
+version: '3.8'
+
+services:
+  # ===================
+  # Backend (Go)
+  # ===================
+  backend:
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    container_name: yourapp_backend
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=${PORT:-5000}
+      - SERVER_HOST=${SERVER_HOST:-0.0.0.0}
+      - CLIENT_URL=${CLIENT_URL:-https://zoom.zacloth.com}
+      - FRONTEND_URL=${FRONTEND_URL:-https://zoom.zacloth.com}
+      # Database
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-yourapp_db}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password123}
+      - POSTGRES_DB=${POSTGRES_DB:-yourapp}
+      - POSTGRES_SSLMODE=disable
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-yourapp_db}:${POSTGRES_PASSWORD:-password123}@db:5432/${POSTGRES_DB:-yourapp}?sslmode=disable
+      # JWT
+      - JWT_SECRET=${JWT_SECRET}
+      # Google OAuth
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      # Redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      # RabbitMQ
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-yourapp}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-password123}
+      # Email
+      - EMAIL_FROM=${EMAIL_FROM}
+      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      # LiveKit - via nginx proxy dengan SSL
+      - LIVEKIT_URL=${LIVEKIT_URL:-wss://zoom.zacloth.com/rtc}
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-devkey}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-6RfzN3B2Lqj8vzdP9XC4tFkp57YhUBsM}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      livekit:
+        condition: service_healthy
+    networks:
+      - yourapp_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:5000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ===================
+  # PostgreSQL Database
+  # ===================
+  db:
+    image: postgres:15-alpine
+    container_name: yourapp_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-yourapp_db}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password123}
+      POSTGRES_DB: ${POSTGRES_DB:-yourapp}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - yourapp_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-yourapp_db} -d ${POSTGRES_DB:-yourapp}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===================
+  # Redis
+  # ===================
+  redis:
+    image: redis:7-alpine
+    container_name: yourapp_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - yourapp_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: redis-server --appendonly yes
+
+  # ===================
+  # RabbitMQ
+  # ===================
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: yourapp_rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-yourapp}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-password123}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - yourapp_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===================
+  # LiveKit Server
+  # ===================
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: yourapp_livekit
+    command: --config /etc/livekit.yaml
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+      - "50000-50100:50000-50100/udp"
+    volumes:
+      - ./be/livekit.yaml:/etc/livekit.yaml
+    networks:
+      - yourapp_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7880 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+
+networks:
+  yourapp_network:
+    driver: bridge
+
