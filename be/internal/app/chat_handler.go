@@ -1,11 +1,13 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"yourapp/internal/service"
 	"yourapp/internal/util"
@@ -20,6 +22,8 @@ type ChatHandler struct {
 	roomService    service.RoomService
 	hub            *websocket.Hub
 	jwtSecret      string
+	// Store agent history per room (roomID -> []HistoryItem)
+	agentHistory sync.Map // map[string][]service.HistoryItem
 }
 
 func NewChatHandler(chatService service.ChatService, kolosalService service.KolosalService, roomService service.RoomService, hub *websocket.Hub, jwtSecret string) *ChatHandler {
@@ -179,9 +183,21 @@ func (h *ChatHandler) KolosalAPI(c *gin.Context) {
 	}
 
 	var req struct {
-		Prompt    string `json:"prompt" binding:"required"`
-		Model     string `json:"model,omitempty"`
-		MaxTokens int    `json:"max_tokens,omitempty"`
+		Prompt          string                 `json:"prompt" binding:"required"`
+		Model           string                 `json:"model,omitempty"`
+		MaxTokens       int                    `json:"max_tokens,omitempty"`
+		Cache           *bool                  `json:"cache,omitempty"`             // Enable/disable response caching
+		ImageData       string                 `json:"image_data,omitempty"`        // Base64 image for OCR
+		UseOCR          bool                   `json:"use_ocr,omitempty"`           // Flag to use OCR instead of chat
+		OCRLanguage     string                 `json:"ocr_language,omitempty"`      // OCR language
+		OCRAutoFix      bool                   `json:"ocr_auto_fix,omitempty"`      // OCR auto fix
+		OCRInvoice      bool                   `json:"ocr_invoice,omitempty"`       // OCR invoice mode
+		OCRCustomSchema map[string]interface{} `json:"ocr_custom_schema,omitempty"` // OCR custom schema
+		UseAgent        bool                   `json:"use_agent,omitempty"`         // Flag to use agent mode
+		WorkspaceID     string                 `json:"workspace_id,omitempty"`      // Workspace ID for agent
+		Tools           []string               `json:"tools,omitempty"`             // Tools for agent
+		History         []service.HistoryItem  `json:"history,omitempty"`           // History from frontend
+		ResetHistory    bool                   `json:"reset_history,omitempty"`     // Reset chat history
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		util.BadRequest(c, err.Error())
@@ -209,58 +225,327 @@ func (h *ChatHandler) KolosalAPI(c *gin.Context) {
 		},
 	})
 
-	// Prepare Kolosal request
-	kolosalRequest := &service.KolosalChatRequest{
-		Model: model,
-		Messages: []service.Message{
-			{
-				Role:    "user",
-				Content: req.Prompt,
-			},
-		},
-		MaxTokens:   maxTokens,
-		Temperature: 0.7,
-		Stream:      false,
+	var aiResponse string
+	var response *service.KolosalChatResponse
+
+	// Handle reset history if requested
+	if req.ResetHistory {
+		h.agentHistory.Delete(roomID)
+		log.Printf("[KolosalAPI] History reset for room: %s", roomID)
 	}
 
-	// Call Kolosal API
-	response, err := h.kolosalService.ChatCompletions(kolosalRequest)
-	if err != nil {
-		log.Printf("[KolosalAPI] Error calling Kolosal API: %v", err)
-		log.Printf("[KolosalAPI] Error details - Type: %T, Message: %s", err, err.Error())
+	// Check if Agent mode is requested
+	if req.UseAgent && req.WorkspaceID != "" {
+		// Handle Agent request
+		log.Printf("[KolosalAPI] Processing Agent request with workspace: %s", req.WorkspaceID)
 
-		// Check if it's a configuration error (missing API key/URL)
-		errorMsg := err.Error()
-		if strings.Contains(errorMsg, "KOLOSAL_API_KEY") || strings.Contains(errorMsg, "KOLOSAL_API_URL") {
-			log.Printf("[KolosalAPI] Configuration error detected - check environment variables")
-			util.ErrorResponse(c, http.StatusInternalServerError, "Kolosal AI is not properly configured. Please check server environment variables.", gin.H{
-				"error":   errorMsg,
-				"details": "Missing KOLOSAL_API_KEY or KOLOSAL_API_URL environment variable",
+		// Get history - prefer from request, fallback to memory
+		var history []service.HistoryItem
+		if len(req.History) > 0 {
+			// Use history from frontend request
+			history = req.History
+			log.Printf("[KolosalAPI] Using history from request: %d items", len(history))
+		} else if hist, ok := h.agentHistory.Load(roomID); ok {
+			// Fallback to memory history
+			history = hist.([]service.HistoryItem)
+			log.Printf("[KolosalAPI] Using history from memory: %d items", len(history))
+		}
+
+		// Build agent request
+		agentRequest := &service.KolosalAgentRequest{
+			Input:       req.Prompt,
+			Model:       model,
+			WorkspaceID: req.WorkspaceID,
+			Tools:       req.Tools,
+			History:     history,
+		}
+
+		agentResponse, err := h.kolosalService.AgentGenerate(agentRequest)
+		if err != nil {
+			log.Printf("[KolosalAPI] Error calling Kolosal Agent API: %v", err)
+
+			// Broadcast error to all users
+			h.hub.BroadcastMessage(roomID, &websocket.Message{
+				RoomID: roomID,
+				UserID: userID.(string),
+				Type:   "ai_error",
+				Payload: map[string]interface{}{
+					"user_id": userID.(string),
+					"error":   fmt.Sprintf("Failed to call Kolosal Agent API: %v", err),
+				},
 			})
+
+			util.ErrorResponse(c, http.StatusInternalServerError, fmt.Sprintf("Failed to call Kolosal Agent API: %v", err), nil)
 			return
 		}
 
-		// Broadcast error to all users
-		h.hub.BroadcastMessage(roomID, &websocket.Message{
-			RoomID: roomID,
-			UserID: userID.(string),
-			Type:   "ai_error",
-			Payload: map[string]interface{}{
-				"user_id": userID.(string),
-				"error":   fmt.Sprintf("Failed to call Kolosal API: %v", err),
+		// Extract agent response
+		if agentResponse.Output != "" {
+			aiResponse = agentResponse.Output
+		} else {
+			aiResponse = "No response from Agent"
+		}
+
+		// Update history with new response
+		if agentResponse.History != nil && len(agentResponse.History) > 0 {
+			h.agentHistory.Store(roomID, agentResponse.History)
+			log.Printf("[KolosalAPI] Updated agent history for room: %s, history length: %d", roomID, len(agentResponse.History))
+		} else {
+			// Manually update history if not returned
+			newHistory := append(history, service.HistoryItem{
+				Type:    "user",
+				Content: req.Prompt,
+			}, service.HistoryItem{
+				Type:    "assistant",
+				Content: aiResponse,
+			})
+			h.agentHistory.Store(roomID, newHistory)
+		}
+
+		// Create a mock response structure for consistency
+		response = &service.KolosalChatResponse{
+			Model: "agent",
+			Choices: []service.Choice{
+				{
+					Message: service.Message{
+						Role:    "assistant",
+						Content: aiResponse,
+					},
+				},
 			},
-		})
+		}
+	} else if req.UseOCR && req.ImageData != "" {
+		// Handle OCR request
+		log.Printf("[KolosalAPI] Processing OCR request")
 
-		util.ErrorResponse(c, http.StatusInternalServerError, fmt.Sprintf("Failed to call Kolosal API: %v", err), nil)
-		return
-	}
+		ocrRequest := &service.KolosalOCRRequest{
+			ImageData: req.ImageData,
+			Language:  req.OCRLanguage,
+			AutoFix:   true,
+			Invoice:   false,
+		}
+		if req.OCRLanguage == "" {
+			ocrRequest.Language = "auto"
+		}
 
-	// Extract response message
-	var aiResponse string
-	if len(response.Choices) > 0 && len(response.Choices[0].Message.Content) > 0 {
-		aiResponse = response.Choices[0].Message.Content
+		ocrResponse, err := h.kolosalService.OCR(ocrRequest)
+		if err != nil {
+			log.Printf("[KolosalAPI] Error calling Kolosal OCR API: %v", err)
+
+			// Broadcast error to all users
+			h.hub.BroadcastMessage(roomID, &websocket.Message{
+				RoomID: roomID,
+				UserID: userID.(string),
+				Type:   "ai_error",
+				Payload: map[string]interface{}{
+					"user_id": userID.(string),
+					"error":   fmt.Sprintf("Failed to call Kolosal OCR API: %v", err),
+				},
+			})
+
+			util.ErrorResponse(c, http.StatusInternalServerError, fmt.Sprintf("Failed to call Kolosal OCR API: %v", err), nil)
+			return
+		}
+
+		// Helper function to extract string from interface{} (can be string, array, or other)
+		extractStringFromInterface := func(val interface{}) string {
+			if val == nil {
+				return ""
+			}
+			switch v := val.(type) {
+			case string:
+				return v
+			case []interface{}:
+				// If it's an array, join all string elements
+				var parts []string
+				for _, item := range v {
+					if str, ok := item.(string); ok {
+						parts = append(parts, str)
+					} else if itemMap, ok := item.(map[string]interface{}); ok {
+						// Try to extract text from object
+						if text, ok := itemMap["text"].(string); ok {
+							parts = append(parts, text)
+						} else if content, ok := itemMap["content"].(string); ok {
+							parts = append(parts, content)
+						}
+					}
+				}
+				return strings.Join(parts, "\n")
+			case []string:
+				return strings.Join(v, "\n")
+			default:
+				// Try to convert to string
+				return fmt.Sprintf("%v", v)
+			}
+		}
+
+		// Log full OCR response for debugging
+		log.Printf("[KolosalAPI] OCR Response - Text: %T, ExtractedText: %T, Result: %T, Content: %T, Data: %v",
+			ocrResponse.Text, ocrResponse.ExtractedText, ocrResponse.Result, ocrResponse.Content, ocrResponse.Data != nil)
+
+		// Extract OCR text - check multiple possible fields (similar to frontend handler)
+		if text := extractStringFromInterface(ocrResponse.Text); text != "" {
+			aiResponse = text
+			log.Printf("[KolosalAPI] Using Text field: %d chars", len(aiResponse))
+		} else if extractedText := extractStringFromInterface(ocrResponse.ExtractedText); extractedText != "" {
+			aiResponse = extractedText
+			log.Printf("[KolosalAPI] Using ExtractedText field: %d chars", len(aiResponse))
+		} else if result := extractStringFromInterface(ocrResponse.Result); result != "" {
+			aiResponse = result
+			log.Printf("[KolosalAPI] Using Result field: %d chars", len(aiResponse))
+		} else if content := extractStringFromInterface(ocrResponse.Content); content != "" {
+			aiResponse = content
+			log.Printf("[KolosalAPI] Using Content field: %d chars", len(aiResponse))
+		} else if ocrText := extractStringFromInterface(ocrResponse.OcrText); ocrText != "" {
+			aiResponse = ocrText
+			log.Printf("[KolosalAPI] Using OcrText field: %d chars", len(aiResponse))
+		} else if len(ocrResponse.Blocks) > 0 {
+			// Extract text from blocks
+			var textParts []string
+			for _, block := range ocrResponse.Blocks {
+				if blockMap, ok := block.(map[string]interface{}); ok {
+					if text, ok := blockMap["text"].(string); ok && text != "" {
+						textParts = append(textParts, text)
+					} else if content, ok := blockMap["content"].(string); ok && content != "" {
+						textParts = append(textParts, content)
+					} else if value, ok := blockMap["value"].(string); ok && value != "" {
+						textParts = append(textParts, value)
+					}
+				}
+			}
+			if len(textParts) > 0 {
+				aiResponse = strings.Join(textParts, "\n")
+				log.Printf("[KolosalAPI] Using Blocks field: %d blocks, %d chars", len(ocrResponse.Blocks), len(aiResponse))
+			}
+		} else if len(ocrResponse.Lines) > 0 {
+			// Extract text from lines
+			var textParts []string
+			for _, line := range ocrResponse.Lines {
+				if lineMap, ok := line.(map[string]interface{}); ok {
+					if text, ok := lineMap["text"].(string); ok && text != "" {
+						textParts = append(textParts, text)
+					} else if content, ok := lineMap["content"].(string); ok && content != "" {
+						textParts = append(textParts, content)
+					}
+				}
+			}
+			if len(textParts) > 0 {
+				aiResponse = strings.Join(textParts, "\n")
+				log.Printf("[KolosalAPI] Using Lines field: %d lines, %d chars", len(ocrResponse.Lines), len(aiResponse))
+			}
+		} else if len(ocrResponse.Paragraphs) > 0 {
+			// Extract text from paragraphs
+			var textParts []string
+			for _, para := range ocrResponse.Paragraphs {
+				if paraMap, ok := para.(map[string]interface{}); ok {
+					if text, ok := paraMap["text"].(string); ok && text != "" {
+						textParts = append(textParts, text)
+					} else if content, ok := paraMap["content"].(string); ok && content != "" {
+						textParts = append(textParts, content)
+					}
+				}
+			}
+			if len(textParts) > 0 {
+				aiResponse = strings.Join(textParts, "\n")
+				log.Printf("[KolosalAPI] Using Paragraphs field: %d paragraphs, %d chars", len(ocrResponse.Paragraphs), len(aiResponse))
+			}
+		} else if ocrResponse.Data != nil {
+			// Check if Data contains text fields
+			if text, ok := ocrResponse.Data["text"].(string); ok && text != "" {
+				aiResponse = text
+				log.Printf("[KolosalAPI] Using Data.text field: %d chars", len(aiResponse))
+			} else if extractedText, ok := ocrResponse.Data["extracted_text"].(string); ok && extractedText != "" {
+				aiResponse = extractedText
+				log.Printf("[KolosalAPI] Using Data.extracted_text field: %d chars", len(aiResponse))
+			} else {
+				// If structured data, convert to string
+				if dataBytes, err := json.Marshal(ocrResponse.Data); err == nil {
+					aiResponse = fmt.Sprintf("📝 **OCR Result:**\n\n```json\n%s\n```", string(dataBytes))
+					log.Printf("[KolosalAPI] Using Data as JSON: %d chars", len(aiResponse))
+				} else {
+					log.Printf("[KolosalAPI] WARNING: Could not extract text from OCR response")
+					aiResponse = "OCR completed but no text extracted. Response data format not recognized."
+				}
+			}
+		} else {
+			// Log full response for debugging
+			responseBytes, _ := json.Marshal(ocrResponse)
+			log.Printf("[KolosalAPI] WARNING: No text found in OCR response. Full response: %s", string(responseBytes))
+			aiResponse = "OCR completed but no text extracted. Please check the image or try again."
+		}
+
+		// Create a mock response structure for consistency
+		response = &service.KolosalChatResponse{
+			Model: "ocr",
+			Choices: []service.Choice{
+				{
+					Message: service.Message{
+						Role:    "assistant",
+						Content: aiResponse,
+					},
+				},
+			},
+		}
 	} else {
-		aiResponse = "No response from AI"
+		// Handle regular chat completion
+		// Prepare Kolosal request
+		kolosalRequest := &service.KolosalChatRequest{
+			Model: model,
+			Messages: []service.Message{
+				{
+					Role:    "user",
+					Content: req.Prompt,
+				},
+			},
+			MaxTokens:   maxTokens,
+			Temperature: 0.7,
+			Stream:      false,
+		}
+
+		// Set cache if provided
+		if req.Cache != nil {
+			kolosalRequest.Cache = req.Cache
+		}
+
+		// Call Kolosal API
+		var err error
+		response, err = h.kolosalService.ChatCompletions(kolosalRequest)
+		if err != nil {
+			log.Printf("[KolosalAPI] Error calling Kolosal API: %v", err)
+			log.Printf("[KolosalAPI] Error details - Type: %T, Message: %s", err, err.Error())
+
+			// Check if it's a configuration error (missing API key/URL)
+			errorMsg := err.Error()
+			if strings.Contains(errorMsg, "KOLOSAL_API_KEY") || strings.Contains(errorMsg, "KOLOSAL_API_URL") {
+				log.Printf("[KolosalAPI] Configuration error detected - check environment variables")
+				util.ErrorResponse(c, http.StatusInternalServerError, "Kolosal AI is not properly configured. Please check server environment variables.", gin.H{
+					"error":   errorMsg,
+					"details": "Missing KOLOSAL_API_KEY or KOLOSAL_API_URL environment variable",
+				})
+				return
+			}
+
+			// Broadcast error to all users
+			h.hub.BroadcastMessage(roomID, &websocket.Message{
+				RoomID: roomID,
+				UserID: userID.(string),
+				Type:   "ai_error",
+				Payload: map[string]interface{}{
+					"user_id": userID.(string),
+					"error":   fmt.Sprintf("Failed to call Kolosal API: %v", err),
+				},
+			})
+
+			util.ErrorResponse(c, http.StatusInternalServerError, fmt.Sprintf("Failed to call Kolosal API: %v", err), nil)
+			return
+		}
+
+		// Extract response message
+		if len(response.Choices) > 0 && len(response.Choices[0].Message.Content) > 0 {
+			aiResponse = response.Choices[0].Message.Content
+		} else {
+			aiResponse = "No response from AI"
+		}
 	}
 
 	// Generate temporary ID for streaming message
@@ -338,11 +623,23 @@ func (h *ChatHandler) KolosalAPI(c *gin.Context) {
 	log.Printf("[KolosalAPI] Success: user=%s, room=%s, prompt=%s, response_length=%d",
 		userID, roomID, req.Prompt, len(aiResponse))
 
-	util.SuccessResponse(c, http.StatusOK, "Kolosal API request successful", gin.H{
+	// Prepare response with history if agent mode
+	responseData := gin.H{
 		"prompt":   req.Prompt,
 		"response": aiResponse,
 		"model":    response.Model,
 		"usage":    response.Usage,
 		"message":  aiMessage, // Include saved message in response
-	})
+	}
+
+	// Include history in response if agent mode
+	if req.UseAgent {
+		var currentHistory []service.HistoryItem
+		if hist, ok := h.agentHistory.Load(roomID); ok {
+			currentHistory = hist.([]service.HistoryItem)
+		}
+		responseData["history"] = currentHistory
+	}
+
+	util.SuccessResponse(c, http.StatusOK, "Kolosal API request successful", responseData)
 }
