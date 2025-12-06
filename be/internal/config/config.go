@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -110,7 +111,7 @@ func Load() (*Config, error) {
 
 		// Kolosal AI - base URL (endpoint will be appended in service)
 		KolosalAPIURL: getEnv("KOLOSAL_API_URL", "https://api.kolosal.ai"),
-		KolosalAPIKey: getEnv("KOLOSAL_API_KEY", ""),
+		KolosalAPIKey: strings.TrimSpace(getEnv("KOLOSAL_API_KEY", "")), // Trim whitespace
 	}
 
 	// Build database URL if not provided

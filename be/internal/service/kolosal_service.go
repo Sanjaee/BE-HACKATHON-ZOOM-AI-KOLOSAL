@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -21,8 +22,11 @@ type kolosalService struct {
 }
 
 func NewKolosalService(apiURL, apiKey string) KolosalService {
+	// Trim whitespace from API key to prevent format issues
+	apiKey = strings.TrimSpace(apiKey)
+
 	return &kolosalService{
-		apiURL: apiURL,
+		apiURL: strings.TrimSpace(apiURL),
 		apiKey: apiKey,
 		client: &http.Client{
 			Timeout: 60 * time.Second, // 60 seconds timeout for AI responses
@@ -75,6 +79,34 @@ func (s *kolosalService) ChatCompletions(request *KolosalChatRequest) (*KolosalC
 		return nil, fmt.Errorf("KOLOSAL_API_KEY is not set. Please configure KOLOSAL_API_KEY environment variable")
 	}
 
+	// Trim any remaining whitespace (safety check)
+	s.apiKey = strings.TrimSpace(s.apiKey)
+
+	// Validate API key format - should start with "kol_"
+	if !strings.HasPrefix(s.apiKey, "kol_") {
+		return nil, fmt.Errorf("KOLOSAL_API_KEY format is invalid. Token should start with 'kol_'. Current prefix: '%s' (length: %d)",
+			func() string {
+				if len(s.apiKey) >= 4 {
+					return s.apiKey[:4]
+				}
+				return "N/A"
+			}(), len(s.apiKey))
+	}
+
+	// Trim any remaining whitespace (safety check)
+	s.apiKey = strings.TrimSpace(s.apiKey)
+
+	// Validate API key format - should start with "kol_"
+	if !strings.HasPrefix(s.apiKey, "kol_") {
+		return nil, fmt.Errorf("KOLOSAL_API_KEY format is invalid. Token should start with 'kol_'. Current prefix: '%s' (length: %d)",
+			func() string {
+				if len(s.apiKey) >= 4 {
+					return s.apiKey[:4]
+				}
+				return "N/A"
+			}(), len(s.apiKey))
+	}
+
 	// Validate API URL
 	if s.apiURL == "" {
 		return nil, fmt.Errorf("KOLOSAL_API_URL is not set. Please configure KOLOSAL_API_URL environment variable")
@@ -95,7 +127,15 @@ func (s *kolosalService) ChatCompletions(request *KolosalChatRequest) (*KolosalC
 
 	// Log request details (without sensitive data)
 	fmt.Printf("[KolosalService] Making request to: %s\n", apiURL)
-	fmt.Printf("[KolosalService] API Key present: %v (length: %d)\n", s.apiKey != "", len(s.apiKey))
+	fmt.Printf("[KolosalService] API Key present: %v (length: %d, prefix: %s)\n",
+		s.apiKey != "",
+		len(s.apiKey),
+		func() string {
+			if len(s.apiKey) >= 4 {
+				return s.apiKey[:4]
+			}
+			return "N/A"
+		}())
 
 	// Create HTTP request
 	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(requestBody))
@@ -122,7 +162,15 @@ func (s *kolosalService) ChatCompletions(request *KolosalChatRequest) (*KolosalC
 
 	// Check status code
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+		errorMsg := string(body)
+		log.Printf("[KolosalService] API Error - Status: %d, Response: %s", resp.StatusCode, errorMsg)
+
+		// Provide more helpful error messages for common errors
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("Kolosal API authentication failed (401). Please check KOLOSAL_API_KEY format. Token should start with 'kol_'. Response: %s", errorMsg)
+		}
+
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, errorMsg)
 	}
 
 	// Parse response
