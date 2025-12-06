@@ -227,6 +227,18 @@ func (h *ChatHandler) KolosalAPI(c *gin.Context) {
 	response, err := h.kolosalService.ChatCompletions(kolosalRequest)
 	if err != nil {
 		log.Printf("[KolosalAPI] Error calling Kolosal API: %v", err)
+		log.Printf("[KolosalAPI] Error details - Type: %T, Message: %s", err, err.Error())
+
+		// Check if it's a configuration error (missing API key/URL)
+		errorMsg := err.Error()
+		if strings.Contains(errorMsg, "KOLOSAL_API_KEY") || strings.Contains(errorMsg, "KOLOSAL_API_URL") {
+			log.Printf("[KolosalAPI] Configuration error detected - check environment variables")
+			util.ErrorResponse(c, http.StatusInternalServerError, "Kolosal AI is not properly configured. Please check server environment variables.", gin.H{
+				"error":   errorMsg,
+				"details": "Missing KOLOSAL_API_KEY or KOLOSAL_API_URL environment variable",
+			})
+			return
+		}
 
 		// Broadcast error to all users
 		h.hub.BroadcastMessage(roomID, &websocket.Message{

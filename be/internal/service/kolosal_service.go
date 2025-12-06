@@ -70,6 +70,16 @@ type Usage struct {
 }
 
 func (s *kolosalService) ChatCompletions(request *KolosalChatRequest) (*KolosalChatResponse, error) {
+	// Validate API key
+	if s.apiKey == "" {
+		return nil, fmt.Errorf("KOLOSAL_API_KEY is not set. Please configure KOLOSAL_API_KEY environment variable")
+	}
+
+	// Validate API URL
+	if s.apiURL == "" {
+		return nil, fmt.Errorf("KOLOSAL_API_URL is not set. Please configure KOLOSAL_API_URL environment variable")
+	}
+
 	// Prepare request body
 	requestBody, err := json.Marshal(request)
 	if err != nil {
@@ -82,6 +92,10 @@ func (s *kolosalService) ChatCompletions(request *KolosalChatRequest) (*KolosalC
 		apiURL += "/"
 	}
 	apiURL += "v1/chat/completions"
+
+	// Log request details (without sensitive data)
+	fmt.Printf("[KolosalService] Making request to: %s\n", apiURL)
+	fmt.Printf("[KolosalService] API Key present: %v (length: %d)\n", s.apiKey != "", len(s.apiKey))
 
 	// Create HTTP request
 	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(requestBody))

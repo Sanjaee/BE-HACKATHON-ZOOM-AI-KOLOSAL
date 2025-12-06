@@ -97,6 +97,15 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	authService := service.NewAuthServiceWithConfig(userRepo, cfg.JWTSecret, rabbitMQ, cfg)
 	roomService := service.NewRoomService(roomRepo, userRepo, cfg)
 	chatService := service.NewChatService(chatRepo, roomRepo, userRepo)
+
+	// Initialize Kolosal service with validation
+	log.Printf("[ROUTER] Initializing Kolosal Service...")
+	log.Printf("[ROUTER] KOLOSAL_API_URL: %s", cfg.KolosalAPIURL)
+	if cfg.KolosalAPIKey != "" {
+		log.Printf("[ROUTER] KOLOSAL_API_KEY: present (length: %d)", len(cfg.KolosalAPIKey))
+	} else {
+		log.Printf("[ROUTER] WARNING: KOLOSAL_API_KEY is not set!")
+	}
 	kolosalService := service.NewKolosalService(cfg.KolosalAPIURL, cfg.KolosalAPIKey)
 
 	// Initialize WebSocket hub

@@ -130,6 +130,15 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("JWT_SECRET must be set")
 	}
 
+	// Validate Kolosal AI configuration (warn if not set, but don't fail)
+	if cfg.KolosalAPIKey == "" {
+		fmt.Println("WARNING: KOLOSAL_API_KEY is not set. Kolosal AI features will not work.")
+	}
+	if cfg.KolosalAPIURL == "" {
+		fmt.Println("WARNING: KOLOSAL_API_URL is not set. Using default: https://api.kolosal.ai")
+		cfg.KolosalAPIURL = "https://api.kolosal.ai"
+	}
+
 	return cfg, nil
 }
 
