@@ -94,54 +94,162 @@ Utility functions dan helpers:
 ### `pkg/logger/`
 Reusable logger library yang bisa digunakan di seluruh aplikasi.
 
-## Setup
+## 🚀 Cara Menjalankan Aplikasi
 
 ### Prerequisites
-- Go 1.21+
-- Docker & Docker Compose
-- PostgreSQL
-- Redis (optional)
-- RabbitMQ (optional)
+Sebelum menjalankan aplikasi, pastikan Anda telah menginstall:
+- **Go 1.21+** - [Download Go](https://golang.org/dl/)
+- **Docker & Docker Compose** - [Download Docker](https://www.docker.com/get-started)
+- **PostgreSQL** (jika menjalankan secara lokal tanpa Docker)
+- **Redis** (jika menjalankan secara lokal tanpa Docker)
+- **RabbitMQ** (jika menjalankan secara lokal tanpa Docker)
 
-### Installation
+### 📦 Installation
 
-1. Clone repository
+#### 1. Clone Repository
 ```bash
 git clone <repository-url>
-cd berealtime/go
+cd monorepo/backend
 ```
 
-2. Copy environment file
+#### 2. Setup Environment Variables
+Buat file `.env` di root folder `backend/` dengan konfigurasi berikut:
+
 ```bash
+# Copy dari .env.example jika ada
 cp .env.example .env
 ```
 
-3. Update `.env` dengan konfigurasi yang sesuai
+Atau buat file `.env` baru dan isi dengan variabel yang diperlukan (lihat bagian Environment Variables di bawah).
 
-4. Install dependencies
+#### 3. Install Dependencies (Untuk Development Lokal)
 ```bash
+cd be
 go mod download
+cd ..
 ```
 
-5. Run dengan Docker Compose
+### 🐳 Menjalankan dengan Docker Compose (Recommended)
+
+Cara termudah untuk menjalankan aplikasi adalah menggunakan Docker Compose. Ini akan menjalankan semua services yang diperlukan (Backend, PostgreSQL, Redis, RabbitMQ, LiveKit) dalam satu perintah.
+
+#### Langkah-langkah:
+
+1. **Pastikan Docker dan Docker Compose sudah terinstall dan berjalan**
+
+2. **Jalankan semua services:**
 ```bash
 docker-compose up -d
 ```
 
-6. Atau run secara lokal
+3. **Cek status services:**
 ```bash
+docker-compose ps
+```
+
+4. **Lihat logs:**
+```bash
+# Semua services
+docker-compose logs -f
+
+# Hanya backend
+docker-compose logs -f backend
+```
+
+5. **Stop services:**
+```bash
+docker-compose down
+```
+
+6. **Stop dan hapus volumes (data akan terhapus):**
+```bash
+docker-compose down -v
+```
+
+#### Services yang akan berjalan:
+- **Backend API**: http://localhost:5000
+- **PostgreSQL**: localhost:5432
+- **Redis**: localhost:6379
+- **RabbitMQ Management UI**: http://localhost:15672
+  - Username: `yourapp` (default)
+  - Password: `password123` (default)
+- **LiveKit Server**: localhost:7880
+
+### 💻 Menjalankan Secara Lokal (Tanpa Docker)
+
+Jika Anda ingin menjalankan backend secara lokal tanpa Docker, pastikan semua dependencies (PostgreSQL, Redis, RabbitMQ) sudah terinstall dan berjalan.
+
+#### Langkah-langkah:
+
+1. **Setup Database PostgreSQL:**
+```bash
+# Buat database
+createdb yourapp
+
+# Atau menggunakan psql
+psql -U postgres
+CREATE DATABASE yourapp;
+```
+
+2. **Jalankan Redis:**
+```bash
+redis-server
+```
+
+3. **Jalankan RabbitMQ:**
+```bash
+# Install RabbitMQ terlebih dahulu, lalu jalankan
+rabbitmq-server
+```
+
+4. **Update file `.env` dengan konfigurasi lokal:**
+```env
+POSTGRES_HOST=localhost
+REDIS_HOST=localhost
+RABBITMQ_HOST=localhost
+```
+
+5. **Jalankan aplikasi:**
+```bash
+cd be
+go run cmd/server/main.go
+```
+
+Aplikasi akan berjalan di **http://localhost:5000**
+
+### 🔄 Development Mode
+
+Untuk development dengan hot reload, gunakan:
+
+```bash
+# Install air (hot reload tool untuk Go)
+go install github.com/cosmtrek/air@latest
+
+# Jalankan dengan air
+cd be
+air
+```
+
+Atau gunakan `go run` dengan watch mode:
+```bash
+cd be
 go run cmd/server/main.go
 ```
 
 ## Environment Variables
 
-Buat file `.env` dengan variabel berikut:
+Buat file `.env` di root folder `backend/` dengan variabel berikut:
 
 ```env
+# Domain & URLs
+DOMAIN=https://your-domain.com
+CLIENT_URL=https://your-domain.com
+FRONTEND_URL=https://your-domain.com
+BACKEND_URL=https://your-domain.com
+
 # Server
 PORT=5000
 SERVER_HOST=0.0.0.0
-CLIENT_URL=http://localhost:3000
 
 # Database
 POSTGRES_HOST=localhost
@@ -151,8 +259,24 @@ POSTGRES_PASSWORD=your_password
 POSTGRES_DB=your_database
 POSTGRES_SSLMODE=disable
 
-# JWT
+# JWT & Authentication
 JWT_SECRET=your_jwt_secret_key
+NEXTAUTH_SECRET=your_nextauth_secret_key
+NEXTAUTH_URL=https://your-domain.com
+
+# Google OAuth
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+NEXT_PUBLIC_GOOGLE_CLIENT_ID=your_google_client_id
+
+# Kolosal AI
+KOLOSAL_API_URL=https://api.kolosal.ai
+KOLOSAL_API_KEY=your_kolosal_api_key
+
+# Cloudinary (optional)
+NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME=your_cloud_name
+NEXT_PUBLIC_CLOUDINARY_API_KEY=your_cloudinary_api_key
+NEXT_PUBLIC_CLOUDINARY_API_SECRET=your_cloudinary_api_secret
 
 # Redis
 REDIS_HOST=localhost
@@ -164,40 +288,90 @@ RABBITMQ_HOST=localhost
 RABBITMQ_PORT=5672
 RABBITMQ_USER=your_user
 RABBITMQ_PASSWORD=your_password
+
+# Email Configuration
+EMAIL_FROM=your_email@gmail.com
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=your_email@gmail.com
+SMTP_PASSWORD=your_smtp_app_password
+
+# LiveKit Configuration
+LIVEKIT_URL=wss://your-domain.com/rtc
+LIVEKIT_API_KEY=your_livekit_api_key
+LIVEKIT_API_SECRET=your_livekit_api_secret
 ```
 
-## Development
+> **⚠️ PENTING:** Jangan commit file `.env` ke repository! Pastikan file `.env` sudah ada di `.gitignore`.
 
-### Run Development Server
-```bash
-go run cmd/server/main.go
-```
+## 🛠️ Development Commands
 
-### Build
+### Build Aplikasi
 ```bash
+cd be
 go build -o bin/server cmd/server/main.go
+```
+
+### Run Binary yang sudah di-build
+```bash
+cd be
+./bin/server
 ```
 
 ### Run Tests
 ```bash
+cd be
 go test ./...
 ```
 
-## Docker
-
-### Build Image
+### Run Tests dengan Coverage
 ```bash
-docker build -t berealtime-go .
+cd be
+go test -cover ./...
 ```
 
-### Run with Docker Compose
+### Format Code
 ```bash
-docker-compose up -d
+cd be
+go fmt ./...
 ```
 
-### Stop Services
+### Lint Code
 ```bash
-docker-compose down
+cd be
+golangci-lint run
+```
+
+## 🐳 Docker Commands
+
+### Build Docker Image
+```bash
+docker build -t yourapp-backend ./be
+```
+
+### Run Container Manual
+```bash
+docker run -p 5000:5000 --env-file .env yourapp-backend
+```
+
+### Rebuild Container (setelah perubahan code)
+```bash
+docker-compose up -d --build backend
+```
+
+### Restart Service Tertentu
+```bash
+docker-compose restart backend
+```
+
+### View Logs Real-time
+```bash
+docker-compose logs -f backend
+```
+
+### Execute Command di Container
+```bash
+docker-compose exec backend sh
 ```
 
 ## Services & Ports
